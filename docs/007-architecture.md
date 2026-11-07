@@ -236,9 +236,19 @@ Validation inherits an omitted base from the saved override, drops removed parts
 
 `prompt` delivers once per request id. `relay` and `notify` enqueue main-Session messages handled by the `relay` and `notice` effects. `src/app/notices.ts` defines their content; `delivery` checks whether a message arrived.
 
+A worker's prompt ends with the task memory and, while a memory change it made waits for the main Session, that change's notice. The memory is text earlier workers wrote, and no rule is met by memory alone.
+
 Each model request binds the Session to the current prompt revision. The revisions it used are stored durably: `promptVersion` identifies the active one and `mayRead` restricts which versions a worker can inspect. Registrations are tracked in one map per agent.
 
 `status` and `promptVersion` serve prompt pages. Saves go through `Prompts.save` and notify the main Session. `modelRetry` exposes model-budget retry state.
+
+### Task memory
+
+`Memory` (`src/app/task-memory.ts`) keeps what dsh-superagent remembers of the person it works for: the classes their Tickets fell into with a count each, and entries that are a trait of some classes or a standing preference about one class, or about all of their tasks when they name none. `current` and `section` read it; `read(input, source)` applies a call's change and returns the memory with each part's outcome, and `history(id)` the recent values of one entry. A call that changes nothing saves nothing.
+
+A state is one `Versions` snapshot under `KV.memory`, so the history of every entry stays readable. An entry without an id takes the one its statement names (`entryId`); an id replaces the entry it names. An entry naming an unknown class, restating another entry, or naming several classes for a preference is refused alone, and the rest of the call applies.
+
+Workers record through `orchestrator_memory` and read the `memory` and `memory/<id>` resources. Their prompt shows the memory as its Memory section, and the main Session's prompt shows it as its Memory section, which it classifies what it routes from; a saved change queues a `memory` notice for the main Session, so a worker's recording reaches it too. Nothing in memory authorizes work: no rule is met by memory alone, and memory never widens a Ticket's scope.
 
 ### Glue
 
@@ -334,6 +344,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/retry-health.ts` | `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry |
 | `src/app/role-models.ts` | Resolves the Eval and Executor models, and seeds a new Session with its role's model |
 | `src/app/assessment.ts` | The MasterAssessor, the assessment schema and the window `orchestrator_eval` answers |
+| `src/app/task-memory.ts` | The task memory: its classes and entries, the Memory section of a prompt, and the `orchestrator_memory` input |
 | `src/app/execution-environment.ts` | The execution environment: its variables, a Ticket's values, the directory root and the lines of the prompt section, which `src/app/prompts.ts` fills into its template |
 | `src/app/source-context.ts` | `sourceContextOf`: each Source kind's `SourceContext` |
 | `src/app/links.ts` | `sourceLink`, the page of a Trigger's message, and `candidateCard` |
@@ -433,6 +444,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/migration.spec.ts` | The schema 11 migration: every stored record in its current shape, and the refusal of older schemas |
 | `tests/store.spec.ts` | Repositories and their working sets, in SQLite as in memory, the kv area, with every key of `KV` spelled only in `src/kv.ts` and the migration, settings history and queries |
 | `tests/prompts.spec.ts` | Prompt validation, assembly and versions |
+| `tests/memory.spec.ts`, `tests/memory-ticket.spec.ts` | The task memory's classes, entries, refusals and history, its Memory sections, and a worker recording it through its tool |
 | `tests/cards.spec.ts` | The rules the built-in text must state, file by file |
 | `tests/model-surface.spec.ts` | Everything models read: tools, prompts, skills and inputs, checked against the tool schemas, the execution environment and the glossary, within a size budget per role |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/index.spec.ts` | The plugin configuration and setup, the agent's process environment, the plugin entry |
@@ -516,12 +528,13 @@ Existing main Sessions on `standard` also need explicit timeouts for foreground 
 
 ### Executor tools
 
-Each Executor has six application tools:
+Each Executor has seven application tools:
 
 | Tool | Purpose |
 | --- | --- |
 | `orchestrator_read` | Read resources available to its own Ticket |
 | `orchestrator_ack` | Acknowledge a request |
+| `orchestrator_memory` | Record the person's task class and the traits or standing preferences the Ticket's work showed, which every worker prompt then shows |
 | `orchestrator_report` | Report progress or an outcome, binding a pull request under the pull-request rules |
 | `orchestrator_thread_unrelated` | Drop an unrelated attached Thread, hand back its owned follow-ups and tell the main Session why |
 | `orchestrator_thread_follow` | Subscribe to a related Thread for context and tell the main Session |

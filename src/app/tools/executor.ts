@@ -8,6 +8,7 @@ import { readResource, type ResourceHost } from '../resources.ts'
 import type { Store } from '../store.ts'
 import { reportRelay, threadFollowedNotice } from '../notices.ts'
 import type { Sessions } from '../sessions.ts'
+import { MemoryInputSchema, type Memory } from '../task-memory.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 
 export interface ExecutorToolsHost {
@@ -15,6 +16,8 @@ export interface ExecutorToolsHost {
   readonly store: Pick<Store, 'tickets' | 'replyStatus' | 'atomic'>
   readonly sessions: Pick<Sessions, 'relay' | 'notify'>
   readonly resources: ResourceHost
+  /** The task memory the worker records its class and traits in, which its prompt shows. */
+  readonly memory: Pick<Memory, 'read'>
   /** GitHub Source context whose pull-request rules govern claiming a reported PR. */
   readonly github: SourceContext
   sendReplies(): Promise<void>
@@ -37,6 +40,12 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         if (reply.status !== 'sent') await host.sendReplies()
         return { trigger_id: args.trigger_id, acknowledgement: host.store.replyStatus(reply.id)!, reused: reply.reused }
       },
+    }),
+    tool({
+      name: 'orchestrator_memory',
+      description: 'Record what this person\'s earlier tickets showed, as the Memory section says: this ticket\'s class with its count, a trait of that class, or a standing preference. Nothing recorded here grants authority.',
+      schema: MemoryInputSchema,
+      execute: async args => host.store.atomic(() => host.memory.read(args, `ticket:${ticketId}`).changes ?? []),
     }),
     tool({
       name: 'orchestrator_thread_unrelated',

@@ -72,6 +72,11 @@ export class Effects {
     this.report(kind)
     this.kick()
   }
+  /** The waiting notice of `name`, such as installed with the `notice` kind, which a prompt shows before it is injected. */
+  notice(name: string): { value: Record<string, unknown>; summary: string } | undefined {
+    const row = this.store.db.prepare('SELECT value FROM effect WHERE kind = ? AND key = ?').get('notice', name)
+    return row === undefined ? undefined : (JSON.parse(String(row.value)) as { value: Record<string, unknown>; summary: string })
+  }
   pending(kind: EffectKind, key?: string): boolean {
     return key === undefined ? !!this.store.db.prepare('SELECT 1 FROM effect WHERE kind = ? LIMIT 1').get(kind) : !!this.store.db.prepare('SELECT 1 FROM effect WHERE kind = ? AND key = ?').get(kind, key)
   }

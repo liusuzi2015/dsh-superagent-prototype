@@ -14,6 +14,7 @@ import { builtInParts, defaultPrompts } from './prompts.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Commands } from '../infra/commands.ts'
 import type { PromptVersion, Prompts } from './prompts.ts'
+import type { Memory } from './task-memory.ts'
 import type { Sessions } from './sessions.ts'
 import type { Settings } from './settings.ts'
 import { KV } from '../kv.ts'
@@ -48,6 +49,9 @@ export const RESOURCES: readonly { name: string; holds: string; executor?: true 
   { name: 'prompts/<revision>', holds: 'one prompt version by number, or current, the one the Session works under', executor: true },
   { name: 'prompts/defaults', holds: 'the built-in prompt configuration, and the built-in parts by the key an override names' },
   { name: 'prompt-preview/<id>', holds: 'a composed prompt that orchestrator_prompts_save previewed' },
+  { name: 'memory', holds: 'the task classes, traits and standing preferences dsh-superagent remembers of the person, and how '
+    + 'orchestrator_memory records more', executor: true },
+  { name: 'memory/<id>', holds: 'the recent values of one memory entry', executor: true },
   { name: 'models', holds: 'model providers, the DSH default and each role\'s model' },
   { name: 'models/<provider>', holds: 'one provider\'s models' },
   { name: 'feishu/<trigger-id>/…', holds: 'a Feishu original, as the dsh-superagent-feishu skill describes', executor: true },
@@ -60,6 +64,7 @@ export interface ResourceHost {
   readonly store: Pick<Store, 'get' | 'settings' | 'triggers' | 'tickets' | 'threads' | 'read' | 'decisions' | 'replyStatus'>
   readonly pages: TextCache
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'skills' | 'defaultChanged'>
+  readonly memory: Pick<Memory, 'read' | 'history'>
   readonly commands: Commands
   readonly masterId: string
   readonly context: Context
@@ -182,6 +187,12 @@ const ROUTES: readonly Route[] = [
       : /^\d+$/.test(rest) ? (Number(rest) === 0 && prompts.current().revision === 0 ? prompts.current() : prompts.version(Number(rest))) : undefined
     if (!version || (ticketId && !host.mayRead(sessionId, version.revision))) throw new Error('Unknown or inaccessible prompt version')
     return text({ ...read, resource: rest === 'current' ? `prompts/${version.revision}` : resource }, JSON.stringify(version))
+  }],
+  ['memory', read => text(read, JSON.stringify(read.host.memory.read()))],
+  ['memory/', read => {
+    const entry = read.host.memory.history(read.rest)
+    if (!entry) throw new Error('Unknown memory entry')
+    return text(read, JSON.stringify(entry))
   }],
   ['prompt-preview/', read => {
     const body = main(read).pages.get(`${read.sessionId}:${read.resource}`)

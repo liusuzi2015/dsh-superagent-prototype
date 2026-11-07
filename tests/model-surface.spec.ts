@@ -25,7 +25,7 @@ import { githubKind } from '../src/sources/github.ts'
 import { testMachine } from './fixtures/deployment.ts'
 
 type Role = 'orchestrator' | 'worker'
-interface Surface { where: string; owner: string; role: Role | 'both'; text: string }
+interface Surface { where: string; owner: string; role: Role | 'both'; text: string; measured?: true }
 interface Tool {
   name: string; description: string; parameters: unknown
   execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown>
@@ -37,7 +37,7 @@ interface Skill { name: string; description: string; content: string }
  * Maximum combined character count of system prompt and tool definitions per role (~5% above baseline).
  * Lower this limit when shrinking model-facing text; raise it only intentionally and explain why in the commit message.
  */
-const BUDGET: Record<Role, number> = { orchestrator: 59_000, worker: 40_500 }
+const BUDGET: Record<Role, number> = { orchestrator: 59_000, worker: 41_000 }
 const PROMPTS = 'prompts/, skills/', TOOLS = 'src/app/tools/', SESSIONS = 'src/app/sessions.ts'
 const NOTICES = 'src/app/notices.ts', LINKS = 'src/app/links.ts', ASSESSMENT = 'src/app/assessment.ts'
 const EXECUTOR = 'src/executor/dsh.ts', ERRORS = 'src/core/errors.ts'
@@ -246,8 +246,14 @@ function collect(host: Host, { a, b, workerA, workerB, refusal }: Awaited<Return
     for (const { name, text } of parts) {
       surfaces.push({ where: `${role} prompt ${name}`, owner: PROMPTS, role: shared.has(name) ? 'both' : role, text })
     }
+    // What the memory writes, with its statement that no rule is met by memory alone, is not the Sessions' text; what a worker
+    // recorded of it is not built-in text at all, so the whole section is only measured.
+    if (role === 'worker') surfaces.push({ where: 'worker prompt task memory', owner: 'src/app/task-memory.ts', role: 'worker', measured: true,
+      text: host.sections.get(sessionId)!({}).replace(/\n## Memory\n[\s\S]*$/, '') })
     // The revision line, the execution environment and the note on a proactive ticket come from the runtime.
     const generated = parts.reduce((text, part) => text.replace(part.text, ''), host.sections.get(sessionId)!({}))
+      // Its task memory is the memory's text, collected above.
+      .replace(/\n## Memory\n[\s\S]*$/, '')
     surfaces.push({ where: `${role} prompt from the runtime`, owner: SESSIONS, role, text: generated })
   }
   for (const [role, sessionId] of [['orchestrator', runtime.masterId], ['worker', workerA]] as const) {
@@ -309,7 +315,8 @@ function failures(): Map<string, string> {
   const tools = { orchestrator: new Set(toolsOf('orchestrator').keys()), worker: new Set(toolsOf('worker').keys()) }
   const registered = (token: string) => tools.orchestrator.has(token) || tools.worker.has(token)
   const variables = new Set(host.runtime.ticketEnvironment(host.runtime.store.tickets.get(sessions.a)!).map(variable => variable.key))
-  for (const { where, owner, role, text } of surfaces) {
+  // The task memory is measured with the prompt, not checked here: what a worker recorded of it is model-written data.
+  for (const { where, owner, role, text } of surfaces.filter(surface => !surface.measured)) {
     const fail = (problem: string) => found.set(`${where}: ${problem}`, owner)
     for (const [token] of text.matchAll(/\borchestrator_[a-z_]+/g)) if (!registered(token)) fail(`${token} is not a tool`)
     for (const [, name, values] of text.matchAll(/\b([a-z_]+)[=:] ?([a-z][a-z/-]*)/g)) {
@@ -348,7 +355,7 @@ function failures(): Map<string, string> {
 }
 
 it('collects both roles\' tools, prompts, skills and inputs', () => {
-  expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_read', 'orchestrator_report',
+  expect([...toolsOf('worker').keys()].sort()).toEqual(['orchestrator_ack', 'orchestrator_memory', 'orchestrator_read', 'orchestrator_report',
     'orchestrator_thread_follow',
     'orchestrator_thread_unrelated', 'orchestrator_trigger_handback'])
   expect([...toolsOf('orchestrator').keys()]).toEqual(expect.arrayContaining(['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_reply']))
@@ -393,6 +400,7 @@ it.each(['orchestrator', 'worker'] as const)('keeps the %s within its character 
   const prompt = Math.max(...ids.map(id => builtIn(host.sections.get(id)!({})).length))
   const definitions = [...toolsOf(role).values()].map(({ name, description, parameters }) => ({ name, description, parameters }))
   const tools = JSON.stringify(definitions).length
+  if (process.env.MEASURE) console.log(`BUDGET ${role}: ${prompt + tools} of ${BUDGET[role]}`)
   expect(prompt + tools, `${prompt} characters of prompt and ${tools} of tools`).toBeLessThanOrEqual(BUDGET[role])
 })
 

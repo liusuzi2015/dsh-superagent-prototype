@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../src/app/store.ts'
-import { Prompts, builtInBase, composePrompt, defaultPrompts, policySection, promptParts, type PromptConfig } from '../src/app/prompts.ts'
+import { Prompts, builtInBase, composePrompt, defaultPrompts, memorySection, policySection, promptParts, type PromptConfig } from '../src/app/prompts.ts'
+import { Memory } from '../src/app/task-memory.ts'
 import { USER_ERRORS, UserError } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { SettingsSchema, policyVersion } from '../src/policy.ts'
@@ -84,8 +85,10 @@ it.each(['orchestrator', 'worker'] as const)('ends the %s prompt with the fixed 
     expect(preview[role]).toBe(prompts.compose(defaultPrompts(), role))
     expect(preview[role]).toContain(`${handoffPolicy(role)}\n\nExecution environment`)
     if (role === 'worker') expect(preview[role].endsWith(ENVIRONMENT_LINE)).toBe(true)
-    // Nothing follows the main Session's Policy section, so a Policy change leaves the rest of its prompt as it was.
-    else expect(preview[role].endsWith(`${ENVIRONMENT_LINE}\n\n${policySection(store.settings()).text}`)).toBe(true)
+    // Nothing follows the main Session's Policy section, so a Policy change leaves the rest of its prompt as it was, and the Memory
+    // section it classifies by comes before it.
+    else expect(preview[role].endsWith(`${ENVIRONMENT_LINE}\n\n${memorySection(new Memory(store)).text}\n\n${policySection(store.settings()).text}`))
+      .toBe(true)
     expect(preview.parts[role].at(-1)!.name).toBe(role === 'orchestrator' ? 'runtime/policy' : 'runtime/environment')
   })
 })

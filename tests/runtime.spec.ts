@@ -1020,8 +1020,9 @@ it('tells both roles the execution environment through a generated prompt sectio
   expect(section.text).not.toContain('MERGE_ACCOUNT')
   // Outside a ticket there is no ticket directory.
   expect(section.text).not.toContain('DSH_SUPERAGENT_DIR')
-  // The main Session's Policy section follows it.
-  expect(preview.orchestrator).toContain(`${section.text}\n\n## Policy`)
+  // The main Session's Policy section follows it, and the memory it classifies by comes before that.
+  expect(preview.orchestrator).toContain(`${section.text}\n\n## Memory\nMemory, by which you classify what you route: `)
+  expect(preview.orchestrator).toContain('\n\n## Policy')
   const { ticket, sessionId } = await acceptedTicket()
   expect(sections.get(sessionId)!.text({})).toContain(`- DSH_SUPERAGENT_DIR = ${JSON.stringify(ticket.execution!.directory)}`)
   expect(sections.get(runtime.masterId)!.text({})).not.toContain('DSH_SUPERAGENT_DIR')

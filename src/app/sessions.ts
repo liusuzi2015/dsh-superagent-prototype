@@ -7,7 +7,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import { key, liveTicket, type Ticket } from '../core/index.ts'
-import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
+import { mandateInstructions, memoryNotice, ticketOfSession } from '../executor/dsh.ts'
+import type { Memory } from './task-memory.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
 import type { Effects } from './effects.ts'
@@ -26,7 +27,7 @@ export interface SessionsHost {
   readonly context: Context
   readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'keys'>
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'compose' | 'skills'>
-  readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending'>
+  readonly effects: Pick<Effects, 'enqueue' | 'handle' | 'idle' | 'pending' | 'notice'>
   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
   readonly health: HealthEntry
   readonly masterId: string
@@ -36,6 +37,8 @@ export interface SessionsHost {
   environment(ticket: Ticket): Variable[]
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
   tools(agent: Agent, ticket?: Ticket): Tool[]
+  /** What dsh-superagent remembers of the person's tasks, whose entries a worker prompt shows as its Memory section. */
+  readonly memory: Pick<Memory, 'section'>
 }
 
 /**
@@ -245,7 +248,10 @@ export class Sessions {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
       const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
-      return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+      // A worker prompt carries what the person's earlier tickets showed, and the memory change of this turn when one waits.
+      const memory = current ? host.memory.section() : '', change = current ? host.effects.notice('memory') : undefined
+      return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}\n${memory}`
+        + `${change ? `\n${memoryNotice(change)}` : ''}`
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
