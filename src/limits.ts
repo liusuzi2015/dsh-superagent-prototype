@@ -8,4 +8,10 @@ export const LIMITS = {
   promptMaxChars: { min: 1000, max: 1_000_000 },
   admissionContextMaxPages: { min: 1, max: 100 },
   admissionContextTimeoutMs: { min: 1, max: 90_000 },
+  /** Task memory: a class name, a class count, one entry's statement, the classes a trait spans, and the entries one call saves. */
+  memoryClassName: 60,
+  memoryClassCount: 100_000,
+  memoryStatement: 400,
+  memoryClasses: 5,
+  memoryEntries: 20,
 } as const

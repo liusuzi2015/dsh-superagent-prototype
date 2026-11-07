@@ -93,6 +93,13 @@ export function mandateInstructions(mandate: Pick<Mandate, 'strength'>): string 
     + 'internal to one module within the accepted rule scope. If it requires public-interface or behavior changes, new interaction, product '
     + 'decisions or clarification, stop and report dropped; do not expand scope.' : ''
 }
+/**
+ * The worker prompt's last part: the mandate instructions, then a change to the task memory the assignment did not request. A
+ * notice carries a memory change this turn cannot read, so here it is text the main Session and later telemetry can see.
+ */
+export function memoryNotice(note: { value: Record<string, unknown>; summary: string }): string {
+  return `A task memory change the assignment did not request: ${note.summary}; ${JSON.stringify(note.value)}.`
+}
 /** Builds a newly accepted ticket's Execution metadata: its worktree name, workspace directory, and assignment text. */
 export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>, settings: Settings,
   stateDir: string): Execution {

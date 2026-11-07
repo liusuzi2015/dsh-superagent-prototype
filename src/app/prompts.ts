@@ -5,6 +5,7 @@ import { policyVersion, type Settings, type SettingsOrigin } from '../policy.ts'
 import { masterPrompt, workerPrompt, sharedPrompt, guides, mainAdmissionPolicy, handoffPolicy, teamDefaults, sourceSkills, cliNotes } from './context.ts'
 import { environmentLines, type Variable } from './execution-environment.ts'
 import { promptsNotice } from './notices.ts'
+import { Memory, memorySection as memoryText, type MemoryVersion } from './task-memory.ts'
 import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import { Versions } from './versions.ts'
@@ -23,7 +24,7 @@ const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.key
 /** The built-in parts a team may override, by key: both roles' parts, the Source skills, and the generated parts' templates. */
 const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/subscriptions', 'runtime/replies',
   'runtime/dispatch', 'runtime/work', 'runtime/admission', 'runtime/handoff/orchestrator', 'runtime/handoff/worker', 'runtime/environment',
-  'runtime/policy', 'runtime/policy/none', 'skill/feishu', 'skill/github'] as const
+  'runtime/policy', 'runtime/policy/none', 'runtime/memory', 'skill/feishu', 'skill/github'] as const
 export type PartKey = typeof PART_KEYS[number]
 /** A team's text for a built-in part, and `base`, the key of the built-in text it was edited from. */
 const OverrideSchema = z.object({ text: z.string(),
@@ -62,6 +63,7 @@ export const builtInParts = (): Readonly<Record<PartKey, BuiltInPart>> => parts 
   'runtime/handoff/orchestrator': { roles: MAIN, text: handoffPolicy('orchestrator') },
   'runtime/handoff/worker': { roles: WORKER, text: handoffPolicy('worker') },
   'runtime/environment': { roles: BOTH, text: `${ENVIRONMENT_HEADING}\n{variables}`, placeholders: ['{variables}'] },
+  'runtime/memory': { roles: MAIN, text: 'Memory, by which you classify what you route: {memory}', placeholders: ['{memory}'] },
   'runtime/policy': { roles: MAIN, text: `${POLICY_HEAD} The enabled rules, by name and id:\n{rules}`, placeholders: ['{version}', '{mode}', '{rules}'] },
   'runtime/policy/none': { roles: MAIN, text: `${POLICY_HEAD} No rule is enabled: a proactive candidate can only be ignored.`,
     placeholders: ['{version}', '{mode}'] },
@@ -89,6 +91,16 @@ export function environmentSection(config: PromptConfig, variables: Variable[] |
  * rule, as the settings hold them, each on one line, so a line of an instruction reads as no rule or heading of its own; the
  * settings bound each instruction (`LIMITS.ruleInstruction`). `key` names the template it was filled from.
  */
+/**
+ * The main Session's Memory section, before its Policy: what dsh-superagent remembers of the person, in one paragraph so no entry
+ * can pass for a heading, which it classifies each request it routes from.
+ */
+export function memorySection(memory: { current(): MemoryVersion }, config: PromptConfig = defaultPrompts()): { key: string; text: string } {
+  // The memory's own section loses a heading of its own inside this one; a team's override keeps the one it wrote.
+  const body = memoryText(memory.current()).replace(/^## Memory\n/, '').replace(/\s*\n\s*/g, ' ')
+  const team = builtIn(config, 'runtime/memory')
+  return { key: 'runtime/memory', text: `${/^## /.test(team) ? '' : '## Memory\n'}${fill(team, { memory: body })}` }
+}
 export function policySection(settings: Settings, config: PromptConfig = defaultPrompts()): { key: string; text: string } {
   const line = (text: string) => text.replace(/\s*\n\s*/g, ' ')
   const rules = settings.policy.rules.filter(rule => rule.enabled).map(({ id, name, instruction }) => `- ${line(name)} (${id}): ${line(instruction)}`)
@@ -97,9 +109,11 @@ export function policySection(settings: Settings, config: PromptConfig = default
 }
 /**
  * Assemble a role's system prompt sections in order from fixed templates, team sections, the generated execution environment
- * and, last, the main Session's generated Policy section, which nothing follows, and whose change leaves the rest unchanged.
+ * and, last, the main Session's generated Memory and Policy sections: the Policy follows the memory it is applied to, and nothing
+ * follows the Policy, whose change leaves the rest unchanged.
  */
-export function promptParts(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string }) {
+export function promptParts(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string },
+  memory?: { key: string; text: string }) {
   // A built-in part names the key its text is overridden by, which for the handoff names the role.
   const fixed = (name: string, part = name) => ({ name, kind: 'fixed' as const, key: part, text: builtIn(config, part as PartKey) })
   const team = (name: TeamSection) => ({ name, kind: 'team' as const, heading: `## ${TEAM_HEADINGS[name]}`,
@@ -111,11 +125,13 @@ export function promptParts(config: PromptConfig, role: Role, environment?: stri
     ...role === 'orchestrator' ? [fixed('runtime/admission')] : [],
     fixed('runtime/handoff', `runtime/handoff/${role}`),
     ...environment ? [{ name: 'runtime/environment', kind: 'generated' as const, key: 'runtime/environment', text: environment }] : [],
+    ...role === 'orchestrator' && memory ? [{ name: 'runtime/memory', kind: 'generated' as const, ...memory }] : [],
     ...role === 'orchestrator' && policy ? [{ name: 'runtime/policy', kind: 'generated' as const, ...policy }] : [],
   ].filter(part => part.text)
 }
-export function composePrompt(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string }): string {
-  return promptParts(config, role, environment, policy).map(part => part.text).join('\n\n')
+export function composePrompt(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string },
+  memory?: { key: string; text: string }): string {
+  return promptParts(config, role, environment, policy, memory).map(part => part.text).join('\n\n')
 }
 export function composeSkill(config: PromptConfig, name: string): string {
   return name === 'feishu' || name === 'github' ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
@@ -140,8 +156,11 @@ export class Prompts {
   }
   /** A role's prompt; the main Session's Policy section follows the settings as they are now, at each model request. */
   compose(config: PromptConfig, role: Role, variables = this.environment()): string {
-    return composePrompt(config, role, environmentSection(config, variables), role === 'orchestrator' ? policySection(this.store.settings(), config) : undefined)
+    return composePrompt(config, role, environmentSection(config, variables), role === 'orchestrator' ? policySection(this.store.settings(), config) : undefined,
+      role === 'orchestrator' ? memorySection(new Memory(this.store), config) : undefined)
   }
+  /** The memory as the main Session's prompt shows it; nothing until a worker records something. */
+  memorySection(memory: { current(): MemoryVersion }): { key: string; text: string } { return memorySection(memory, this.current().config) }
   /** Returns skills to register in every Session: built-in Source skills (`feishu` only when a Feishu bot is configured) followed by team skills. */
   skills(config: PromptConfig): [string, string][] {
     return [...this.feishu() ? ['feishu'] : [], 'github', ...Object.keys(config.skills)].map(name => [name, composeSkill(config, name)])
@@ -195,8 +214,9 @@ export class Prompts {
   preview(value: unknown) {
     const config = this.validate(value)
     const environment = environmentSection(config, this.environment()), policy = policySection(this.store.settings(), config)
-    return { orchestrator: composePrompt(config, 'orchestrator', environment, policy), worker: composePrompt(config, 'worker', environment),
-      parts: { orchestrator: promptParts(config, 'orchestrator', environment, policy), worker: promptParts(config, 'worker', environment) },
+    const memory = memorySection(new Memory(this.store), config)
+    return { orchestrator: composePrompt(config, 'orchestrator', environment, policy, memory), worker: composePrompt(config, 'worker', environment),
+      parts: { orchestrator: promptParts(config, 'orchestrator', environment, policy, memory), worker: promptParts(config, 'worker', environment) },
       skills: Object.fromEntries(this.skills(config)), scope: 'Team sections, skills, and overrides of built-in parts, which follow their built-in text until overridden. Workers additionally inherit the host prompt and repository AGENTS.md. Prompt text changes what the agents are told, not what dsh-superagent allows: tool permissions, the gate and account wrappers stay.' }
   }
   save(value: unknown, baseRevision: number, source: SettingsOrigin): PromptVersion {
