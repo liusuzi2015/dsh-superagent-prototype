@@ -30,6 +30,8 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 
+Sources are plugins: each one, such as GitHub or Feishu, feeds events into the core as Triggers and sends replies back through a Channel, so a new service is added as a Source kind without changing the core. [docs/001-domain.md](docs/001-domain.md) and [docs/007-architecture.md](docs/007-architecture.md) describe them.
+
 ## Development
 
 `pnpm check` runs the typecheck, the tests and the build.
